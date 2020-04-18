@@ -1851,7 +1851,7 @@ static void state_texm3x3(Context *ctx, const char *opcode, const int dims)
     const TextureType ttype = (TextureType) (sreg ? sreg->index : 0);
 
     // A samplermap might change this to something nonsensical.
-    if ((ttype != TEXTURE_TYPE_VOLUME) && (ttype != TEXTURE_TYPE_CUBE))
+    if (dims && (ttype != TEXTURE_TYPE_VOLUME) && (ttype != TEXTURE_TYPE_CUBE))
         failf(ctx, "%s needs a 3D or Cubemap sampler", opcode);
 } // state_texm3x3
 

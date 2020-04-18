@@ -46,6 +46,12 @@ static void Free(void *_ptr)
 #define Free NULL
 #endif
 
+static const char* g_outPath;
+static FILE* g_out;
+#define printf(...) fprintf(g_out, __VA_ARGS__)
+#define putchar(c) putc((c), g_out)
+static const char* g_srcfile;
+
 static inline void do_indent(const unsigned int indent)
 {
     unsigned int i;
@@ -409,6 +415,23 @@ static void print_shader(const char *fname, const MOJOSHADER_parseData *pd,
             {
 #if SUPPORT_PROFILE_SPIRV && defined(MOJOSHADER_HAS_SPIRV_TOOLS)
                 int binary_len = pd->output_len - sizeof(SpirvPatchTable);
+                if (g_outPath)
+                {
+                    const char *shader_type = NULL;
+                    switch (pd->shader_type)
+                    {
+                        case MOJOSHADER_TYPE_PIXEL: shader_type = "ps"; break;
+                        case MOJOSHADER_TYPE_VERTEX: shader_type = "vs"; break;
+                        case MOJOSHADER_TYPE_GEOMETRY: shader_type = "gs"; break;
+                        default: assert(!"Invalid shader type");
+                    }
+
+                    char filename[512];
+                    snprintf(filename, sizeof(filename), "%s.%s.%s.spv", g_outPath, pd->mainfn, shader_type);
+                    FILE* f = fopen(filename, "wb");
+                    fwrite(pd->output, 1, binary_len, f);
+                    fclose(f);
+                }
 
                 uint32_t *words = (uint32_t *) pd->output;
                 size_t word_count = binary_len / 4;
@@ -457,6 +480,13 @@ static void print_shader(const char *fname, const MOJOSHADER_parseData *pd,
             INDENT();
             for (i = 0; i < output_len; i++)
             {
+#ifdef _WINDOWS
+                // Because testparse uses '\n' everywhere, when mojoshader puts '\r\n' into output
+                // mixed with what testparse writes, we end up with inconsistent line endings in file.
+                // And when writing into text stream, '\r\n' sequence becomes '\r\r\n' sequence.
+                if (output[i] == '\r')
+                    continue;
+#endif
                 putchar((int) output[i]);
                 if (output[i] == '\n')
                     INDENT();
@@ -810,7 +840,7 @@ static int do_parse(const char *fname, const unsigned char *buf,
             }
         }
         retval = (error_count == 0);
-        printf("EFFECT: %s\n", fname);
+        printf("EFFECT:\n");
         print_effect(fname, effect, 1);
         MOJOSHADER_deleteEffect(effect);
 #else
@@ -824,7 +854,7 @@ static int do_parse(const char *fname, const unsigned char *buf,
         pd = MOJOSHADER_parse(prof, NULL, buf, len, NULL, 0,
                               NULL, 0, Malloc, Free, NULL);
         retval = (pd->error_count == 0);
-        printf("SHADER: %s\n", fname);
+        printf("SHADER:\n");
         print_shader(fname, pd, 1);
         MOJOSHADER_freeParseData(pd);
     } // else
@@ -832,42 +862,88 @@ static int do_parse(const char *fname, const unsigned char *buf,
     return retval;
 } // do_parse
 
+static void print_logo(FILE* f)
+{
+    fprintf(f, "MojoShader testparse\n");
+    fprintf(f, "Compiled against changeset %s\n", MOJOSHADER_CHANGESET);
+    fprintf(f, "Linked against changeset %s\n", MOJOSHADER_changeset());
+    fprintf(f, "\n");
+}
 
 int main(int argc, char **argv)
 {
     int retval = 0;
 
-    printf("MojoShader testparse\n");
-    printf("Compiled against changeset %s\n", MOJOSHADER_CHANGESET);
-    printf("Linked against changeset %s\n", MOJOSHADER_changeset());
-    printf("\n");
+    g_out = stdout;
 
-    if (argc <= 2)
-        printf("\n\nUSAGE: %s <profile> [file1] ... [fileN]\n\n", argv[0]);
+    int no_logo = 0;
+    int i = 1;
+    while (argc - i >= 2)
+    {
+        if (strcmp(argv[i], "-o") == 0)
+        {
+            FILE* f = fopen(argv[i + 1], "wb");
+            if (f)
+            {
+                if (g_out != stdout)
+                    fclose(g_out);
+
+                g_out = f;
+                g_outPath = argv[i + 1];
+            }
+
+            i += 2;
+        } // if
+        else if (strcmp(argv[i], "--no-logo") == 0)
+        {
+            no_logo = 1;
+            i += 1;
+        } // else if
+        else
+            break;
+    }
+
+    if ((argc - i) < 2)
+    {
+        if (!no_logo)
+            print_logo(stdout);
+
+        fprintf(stdout, "\n\nUSAGE: %s [-o <dstFile>] <profile> [file1] ... [fileN]\n\n", argv[0]);
+    } // if
     else
     {
-        const char *profile = argv[1];
-        int i;
+        if (!no_logo)
+            print_logo(g_out);
 
-        for (i = 2; i < argc; i++)
+        const char *profile = argv[i++];
+        for (; i < argc; i++)
         {
             FILE *io = fopen(argv[i], "rb");
             if (io == NULL)
-                printf(" ... fopen('%s') failed.\n", argv[i]);
+            {
+                fprintf(stderr, "%s\n", argv[i]);
+                fprintf(stderr, " ... fopen('%s') failed.\n", argv[i]);
+            } // if
             else
             {
                 unsigned char *buf = (unsigned char *) malloc(1000000);
                 int rc = fread(buf, 1, 1000000, io);
                 fclose(io);
+                g_srcfile = argv[i];
                 if (!do_parse(argv[i], buf, rc, profile))
                     retval = 1;
+                g_srcfile = NULL;
                 free(buf);
             } // else
         } // for
     } // else
 
+    if (g_out != stdout)
+    {
+        fclose(g_out);
+    }
+
     return retval;
 } // main
 
 // end of testparse.c ...
-
