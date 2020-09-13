@@ -2036,7 +2036,14 @@ void emit_SPIRV_const_array(Context *ctx,
     spv_emit(ctx, 4, SpvOpTypePointer, tid_parray, SpvStorageClassPrivate, tid_array);
 
     uint32 id_array_var = ctx->spirv.constant_arrays.idvec4;
+    #if 0
     spv_emit(ctx, 5, SpvOpVariable, tid_parray, id_array_var, SpvStorageClassPrivate, id_array);
+    #else
+    spv_emit(ctx, 4, SpvOpVariable, tid_parray, id_array_var, SpvStorageClassPrivate);
+    push_output(ctx, &ctx->mainline_top);
+    spv_emit(ctx, 3, SpvOpStore, id_array_var, id_array);
+    pop_output(ctx);
+    #endif
 
     Free(ctx, constituents);
     pop_output(ctx);
